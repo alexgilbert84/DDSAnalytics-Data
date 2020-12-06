@@ -1,0 +1,190 @@
+---
+title: "DDSAnalytics Attrition and Monthly Income Analysis"
+author: "Alex Gilbert"
+date: "12/5/2020"
+output: html_document
+---
+
+Link to video: https://youtu.be/zlIC_hxnuzg
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Load Libraries
+
+```{r, message = FALSE, warning=FALSE}
+library(ggplot2)
+library(magrittr)
+library(dplyr)
+library(dlookr)
+library(ltm)
+library(caret)
+library(e1071)
+library(Boruta)
+library(wesanderson)
+```
+
+#Load Data and Create Data Frames
+
+```{r, message = TRUE}
+attrition <- read.csv("https://raw.githubusercontent.com/alexgilbert84/DDSAnalytics-Data/main/CaseStudy2-data.csv")
+forpredictions <- read.csv("https://raw.githubusercontent.com/alexgilbert84/DDSAnalytics-Data/main/CaseStudy2CompSet%20No%20Salary.csv")
+
+dfattrition <- as.data.frame(attrition)
+dfattrition$JobSatisfaction <- as.factor(dfattrition$JobSatisfaction)
+dfattrition$Attrition <- as.factor(dfattrition$Attrition)
+
+forpredictions <- as.data.frame(forpredictions)
+```
+
+
+#Variable Selection
+
+```{r, message = FALSE, warning = FALSE}
+# Use Boruta for variable selection related to Attrition
+
+boruta.train <- Boruta(Attrition~., data=dfattrition, doTrace=2)
+```
+
+```{r, message = TRUE}
+boruta.train
+
+plot(boruta.train, main = "Importance of Variables on Attrition", xlab = "", xaxt = "n")
+lz<-lapply(1:ncol(boruta.train$ImpHistory),function(i)
+  boruta.train$ImpHistory[is.finite(boruta.train$ImpHistory[,i]),i])
+names(lz) <- colnames(boruta.train$ImpHistory)
+Labels <- sort(sapply(lz,median))
+axis(side = 1,las=2,labels = names(Labels),
+     at = 1:ncol(boruta.train$ImpHistory), cex.axis = 0.7)
+```
+
+## Check Assumptions
+```{r}
+
+# EDA for selected values
+# OverTime MonthlyIncome StockOptionLevel
+
+## Bar Graph of Overtime vs Attrition
+dfattrition %>% ggplot(aes(x=OverTime, fill = Attrition)) + 
+  geom_bar() +
+  ggtitle("Attrition Rates by Employee Overtime") + 
+  xlab("Does Employee Work Overtime?") + 
+  scale_fill_manual(values=wes_palette(n=3, name="Royal1"))
+
+## Boxplot of Stock Option Level vs Monthly Income vs Attrition
+dfattrition %>% group_by(StockOptionLevel) %>% 
+  ggplot(aes(x=as.factor(StockOptionLevel), y = MonthlyIncome, fill = Attrition)) + 
+  geom_boxplot() +
+  ggtitle("Attrition Rates by Overtime and Monthly Income") + 
+  xlab("Stock Option Level") + ylab("Monthly Income") + 
+  scale_fill_manual(values=wes_palette(n=3, name="Royal1"))
+
+## Boxplot of Stock Option Level vs Monthly Income vs Overtime
+dfattrition %>% group_by(StockOptionLevel) %>%
+  ggplot(aes(x=as.factor(StockOptionLevel), y = MonthlyIncome, fill = OverTime)) + 
+  geom_boxplot() +
+  ggtitle("Association of Overtime with Monthly Income and Stock Options") + 
+  xlab("Stock Option Level") + ylab("Monthly Income") +
+  scale_fill_manual(values=wes_palette(n=3, name="Royal1"))
+```
+
+##Perform Significant Tests and Check Correlations
+
+```{r}
+# Run various t-tests and Chi Square tests
+
+## Variables that were chosen
+
+t.test(MonthlyIncome ~ Attrition, data = dfattrition, var.equal = TRUE)
+t.test(StockOptionLevel ~ Attrition, data = dfattrition, var.equal = TRUE)
+chisq.test(table(dfattrition$Attrition,dfattrition$OverTime))
+
+```
+
+
+##Perform Predictions Using Naive Bayes
+
+```{r}
+## Create Data Set w/ selected variables
+
+df1 <- dfattrition %>% dplyr::select(OverTime,MonthlyIncome, StockOptionLevel, Attrition)
+
+model = naiveBayes(Attrition~., data = df1, laplace = 3)
+predict(model,df1[,c(1,2,3)], type = "raw")
+
+## Create Training and Test Sets for Attrition
+
+trainIndices = sample(seq(1:length(df1$Attrition)),round(.7*length(df1$Attrition)))
+trainattrition = df1[trainIndices,]
+testattrition = df1[-trainIndices,]
+
+## Build and Test Model
+
+model = naiveBayes(trainattrition[,c(1,2,3)],as.factor(trainattrition$Attrition),laplace = 600)
+table(predict(model,testattrition[,c(1,2,3)]),as.factor(testattrition$Attrition))
+CM = confusionMatrix(table(predict(model,testattrition[,c(1,2,3)]),as.factor(testattrition$Attrition)))
+CM
+```
+# Use model to predict test set without Attrition
+
+```{r}
+
+attritionprojecttest <- read.csv("https://raw.githubusercontent.com/alexgilbert84/DDSAnalytics-Data/main/CaseStudy2CompSet%20No%20Attrition.csv")
+
+dftest1 <- attritionprojecttest %>% dplyr::select(OverTime,MonthlyIncome, StockOptionLevel)
+
+attrition.prediction <- predict(model,dftest1[,c(1,2,3)])
+
+write.csv(attrition.prediction,"D:/School/Courses/Doing Data Science/Repos/MSDS_6306_Doing-Data-Science/Unit 14 and 15 Case Study 2/Case2PredictionsGilbert Attrition.csv")
+
+```  
+
+
+#Create regression model for finding monthly salary
+```{r, warning=FALSE, message=FALSE}
+## Use Boruta for variable selection for Monthly Income
+
+boruta.train.income <- Boruta(MonthlyIncome~., data=dfattrition, doTrace=2)
+```
+
+```{r}
+boruta.train.income
+
+plot(boruta.train.income, main = "Importance of Variables on Monthly Income", xlab = "", xaxt = "n")
+lz<-lapply(1:ncol(boruta.train.income$ImpHistory),function(i)
+  boruta.train.income$ImpHistory[is.finite(boruta.train.income$ImpHistory[,i]),i])
+names(lz) <- colnames(boruta.train.income$ImpHistory)
+Labels <- sort(sapply(lz,median))
+axis(side = 1,las=2,labels = names(Labels),
+     at = 1:ncol(boruta.train.income$ImpHistory), cex.axis = 0.7)
+```
+#Fit Regression Line
+```{r}
+## Split categorical variables into factors
+
+df2 <- dfattrition %>% dplyr::select(JobLevel,TotalWorkingYears,JobRole,MonthlyIncome)
+  
+df2$JobRole.f <- factor(df2$JobRole)
+is.factor(df2$JobRole.f)
+
+df2$JobLevel.f <- factor(df2$JobLevel)
+is.factor(df2$JobLevel.f)
+
+## Fit regression equation
+
+fit <- lm(MonthlyIncome~JobLevel.f+TotalWorkingYears+JobRole.f, data = df2)
+summary(fit)
+```
+
+#Make Predictions
+
+```{r}
+forpredictions$JobRole.f <- factor(forpredictions$JobRole)
+forpredictions$JobLevel.f <- factor(forpredictions$JobLevel)
+
+newpredictions <- predict(fit, newdata=forpredictions)
+as_tibble(newpredictions)
+
+write.csv(newpredictions,"D:/School/Courses/Doing Data Science/Repos/MSDS_6306_Doing-Data-Science/Unit 14 and 15 Case Study 2/Case2PredictionsGilbert Salary.csv")
+```
